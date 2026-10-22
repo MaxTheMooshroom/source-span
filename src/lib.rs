@@ -108,14 +108,14 @@
 #![warn(clippy::perf, clippy::must_use_candidate)]
 use std::cmp::{Ord, Ordering, PartialOrd};
 
-mod buffer;
+pub mod buffer;
 pub mod fmt;
 mod loc;
 mod metrics;
 mod position;
 mod layout;
 
-pub use buffer::{self, SourceBuffer};
+pub use buffer::SourceBuffer;
 pub use loc::Loc;
 pub use metrics::*;
 pub use position::Position;
