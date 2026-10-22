@@ -115,7 +115,7 @@ mod metrics;
 mod position;
 mod layout;
 
-pub use buffer::{Iter, SourceBuffer};
+pub use buffer::{self, SourceBuffer};
 pub use loc::Loc;
 pub use metrics::*;
 pub use position::Position;
