@@ -43,14 +43,14 @@ impl Position {
 	///
 	/// assert_eq!(
 	/// 	Position::end(),
-	/// 	Position::new(usize::max_value(), usize::max_value())
+	/// 	Position::new(usize::MAX, usize::MAX)
 	/// 	);
 	/// ```
 	#[must_use]
 	pub const fn end() -> Self {
 		Self {
-			line: usize::max_value(),
-			column: usize::max_value(),
+			line: usize::MAX,
+			column: usize::MAX,
 		}
 	}
 
@@ -167,11 +167,11 @@ impl Position {
 
 impl fmt::Display for Position {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		if self.line == usize::max_value() && self.column == usize::max_value() {
+		if self.line == usize::MAX && self.column == usize::MAX {
 			write!(f, "line [end] column [end]")
-		} else if self.line == usize::max_value() {
+		} else if self.line == usize::MAX {
 			write!(f, "line [end] column {}", self.column + 1)
-		} else if self.column == usize::max_value() {
+		} else if self.column == usize::MAX {
 			write!(f, "line {} column [end]", self.line + 1)
 		} else {
 			write!(f, "line {} column {}", self.line + 1, self.column + 1)
@@ -181,11 +181,11 @@ impl fmt::Display for Position {
 
 impl fmt::Debug for Position {
 	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-		if self.line == usize::max_value() && self.column == usize::max_value() {
+		if self.line == usize::MAX && self.column == usize::MAX {
 			write!(f, "[end]:[end]")
-		} else if self.line == usize::max_value() {
+		} else if self.line == usize::MAX {
 			write!(f, "[end]:{}", self.column + 1)
-		} else if self.column == usize::max_value() {
+		} else if self.column == usize::MAX {
 			write!(f, "{}:[end]", self.line + 1)
 		} else {
 			write!(f, "{}:{}", self.line + 1, self.column + 1)
@@ -244,17 +244,17 @@ mod tests {
 	fn test_debug() {
 		assert_eq!(format!("{:?}", Position::new(2, 3)), "3:4".to_string());
 		assert_eq!(
-			format!("{:?}", Position::new(usize::max_value(), 3)),
+			format!("{:?}", Position::new(usize::MAX, 3)),
 			"[end]:4".to_string()
 		);
 		assert_eq!(
-			format!("{:?}", Position::new(3, usize::max_value())),
+			format!("{:?}", Position::new(3, usize::MAX)),
 			"4:[end]".to_string()
 		);
 		assert_eq!(
 			format!(
 				"{:?}",
-				Position::new(usize::max_value(), usize::max_value())
+				Position::new(usize::MAX, usize::MAX)
 			),
 			"[end]:[end]".to_string()
 		);

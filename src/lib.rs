@@ -396,11 +396,11 @@ impl Span {
 			},
 			last: Position {
 				line: self.end.line,
-				column: usize::max_value() - 1,
+				column: usize::MAX - 1,
 			},
 			end: Position {
 				line: self.end.line,
-				column: usize::max_value(),
+				column: usize::MAX,
 			},
 		}
 	}

@@ -194,7 +194,7 @@ impl<E, I: Iterator<Item = Result<char, E>>, M: Metrics> SourceBuffer<E, I, M> {
 	///
 	/// When it reaches the end of the buffer, the buffer will start reading
 	/// from the source stream.
-	pub fn iter(&self) -> Iter<E, I, M> {
+	pub fn iter(&self) -> Iter<'_, E, I, M> {
 		Iter {
 			buffer: self,
 			i: Some(Ok(0)),
@@ -210,7 +210,7 @@ impl<E, I: Iterator<Item = Result<char, E>>, M: Metrics> SourceBuffer<E, I, M> {
 	/// start from the buffer start position.
 	/// When it reaches the end of the buffer, the buffer will start reading
 	/// from the source stream.
-	pub fn iter_from(&self, pos: Position) -> Iter<E, I, M> {
+	pub fn iter_from(&self, pos: Position) -> Iter<'_, E, I, M> {
 		let start = self.p.borrow().span.start();
 		let pos = std::cmp::max(start, pos);
 
@@ -229,7 +229,7 @@ impl<E, I: Iterator<Item = Result<char, E>>, M: Metrics> SourceBuffer<E, I, M> {
 	/// will start from the buffer start position.
 	/// When it reaches the end of the buffer, the buffer will start reading
 	/// from the source stream.
-	pub fn iter_span(&self, span: Span) -> Iter<E, I, M> {
+	pub fn iter_span(&self, span: Span) -> Iter<'_, E, I, M> {
 		let start = self.p.borrow().span.start();
 		let pos = std::cmp::max(start, span.start());
 
