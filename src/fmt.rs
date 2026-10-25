@@ -121,7 +121,7 @@ impl Default for Color {
 impl termion::color::Color for Color {
 	fn write_fg(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Self::Default => Ok(()),
+			Self::Default => termion::color::Reset.write_fg(f),
 			Self::Red => termion::color::LightRed.write_fg(f),
 			Self::Green => termion::color::LightGreen.write_fg(f),
 			Self::Blue => termion::color::LightBlue.write_fg(f),
@@ -133,7 +133,7 @@ impl termion::color::Color for Color {
 
 	fn write_bg(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
-			Self::Default => Ok(()),
+			Self::Default => termion::color::Reset.write_bg(f),
 			Self::Red => termion::color::LightRed.write_bg(f),
 			Self::Green => termion::color::LightGreen.write_bg(f),
 			Self::Blue => termion::color::LightBlue.write_bg(f),
@@ -197,9 +197,9 @@ pub enum Style {
 impl Style {
 	/// Create a new custom highlight style.
 	///
-	/// The `line` character is user to draw the line under the span elements.
-	/// The `marker` character is used to point to the first and last elements
-	/// of the span when relevant.
+	/// The `line` character is user to draw the line under the highlighted
+	/// sections. The `marker` character is used to point to the first and last
+	/// elements of the section when relevant.
 	#[must_use]
 	#[cfg(not(feature = "colors"))]
 	pub const fn new(underline: char, marker: char) -> Self { Self::Custom(underline, marker, Color::Default) }

@@ -123,10 +123,10 @@ pub use metrics::*;
 pub use position::Position;
 pub use layout::*;
 
-// #[cfg(all(feature = "colors", not(feature = "colors-backend")))]
-// compile_error!(
-// 	"feature 'colors' requires a backend. Enable 'termion', or 'crossterm' on Windows."
-// );
+#[cfg(all(feature = "termion", feature = "crossterm"))]
+compile_error!(
+	"features 'termion' and 'crossterm' are mutually exclusive."
+);
 
 /// Span in a source file.
 ///

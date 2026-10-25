@@ -25,6 +25,7 @@ termion = { version = "1.5", optional = true }
 [dev-dependencies]
 utf8-decode = "1.0"
 
+# cargo all-features <check/test>
 [package.metadata.cargo-all-features]
 skip_optional_dependencies = true
 skip_feature_sets = [["termion", "crossterm"]]
