@@ -60,6 +60,8 @@
 //! 20 |
 //! ```
 
+#[cfg(feature = "colors")]
+use crate::colors;
 use crate::{Metrics, Position, Span};
 use std::fmt;
 
@@ -81,13 +83,41 @@ pub enum Color {
 	Cyan,
 }
 
+#[allow(dead_code)]
+impl Color {
+	#[cfg(feature = "colors")]
+	fn into_foreground(self) -> colors::Foreground {
+		Into::<colors::Foreground>::into(self)
+	}
+
+	#[cfg(feature = "colors")]
+	fn into_background(self) -> colors::Background {
+		Into::<colors::Background>::into(self)
+	}
+}
+
+#[cfg(feature = "crossterm")]
+impl From<Color> for crossterm::style::Color {
+	fn from(value: Color) -> Self {
+		match value {
+			Color::Default => crossterm::style::Color::Reset,
+			Color::Red => crossterm::style::Color::Red,
+			Color::Green => crossterm::style::Color::Green,
+			Color::Blue => crossterm::style::Color::Blue,
+			Color::Magenta => crossterm::style::Color::Magenta,
+			Color::Yellow => crossterm::style::Color::Yellow,
+			Color::Cyan => crossterm::style::Color::Cyan,
+		}
+	}
+}
+
 impl Default for Color {
 	fn default() -> Self {
 		Self::Default
 	}
 }
 
-#[cfg(feature = "colors")]
+#[cfg(feature = "termion")]
 impl termion::color::Color for Color {
 	fn write_fg(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
@@ -833,12 +863,14 @@ impl fmt::Display for CharMap {
 				let c = self.data[i];
 				#[cfg(feature = "colors")]
 				{
+					use colors::Style;
+
 					if c.color() != current_color && !c.is_free() {
 						current_color = c.color();
 						if let Some(color) = current_color {
-							write!(f, "{}{}", termion::style::Bold, termion::color::Fg(color))?;
+							write!(f, "{}{}", Style::Bold, color.into_foreground())?;
 						} else {
-							write!(f, "{}", termion::style::Reset)?;
+							write!(f, "{}", Style::Reset)?;
 						}
 					}
 				}
@@ -848,7 +880,7 @@ impl fmt::Display for CharMap {
 		}
 
 		#[cfg(feature = "colors")]
-		write!(f, "{}", termion::style::Reset)?;
+		write!(f, "{}", colors::Style::Reset)?;
 
 		Ok(())
 	}

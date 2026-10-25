@@ -109,6 +109,8 @@
 use std::cmp::{Ord, Ordering, PartialOrd};
 
 pub mod buffer;
+#[cfg(feature = "colors")]
+mod colors;
 pub mod fmt;
 mod loc;
 mod metrics;
@@ -120,6 +122,11 @@ pub use loc::Loc;
 pub use metrics::*;
 pub use position::Position;
 pub use layout::*;
+
+// #[cfg(all(feature = "colors", not(feature = "colors-backend")))]
+// compile_error!(
+// 	"feature 'colors' requires a backend. Enable 'termion', or 'crossterm' on Windows."
+// );
 
 /// Span in a source file.
 ///
