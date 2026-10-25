@@ -8,7 +8,7 @@ keywords = ["source", "code", "map", "span"]
 description = "Source code mapping and display utilities."
 repository = "https://github.com/timothee-haudebourg/source-span"
 documentation = "https://docs.rs/source-span"
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 [features]

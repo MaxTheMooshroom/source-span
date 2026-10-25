@@ -64,21 +64,34 @@ use crate::{Metrics, Position, Span};
 use std::fmt;
 
 /// Colors used to render the text.
-#[cfg(feature = "colors")]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Color {
+	Default,
+	#[cfg(feature = "colors")]
 	Red,
+	#[cfg(feature = "colors")]
 	Green,
+	#[cfg(feature = "colors")]
 	Blue,
+	#[cfg(feature = "colors")]
 	Magenta,
+	#[cfg(feature = "colors")]
 	Yellow,
+	#[cfg(feature = "colors")]
 	Cyan,
+}
+
+impl Default for Color {
+	fn default() -> Self {
+		Self::Default
+	}
 }
 
 #[cfg(feature = "colors")]
 impl termion::color::Color for Color {
 	fn write_fg(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
+			Self::Default => Ok(()),
 			Self::Red => termion::color::LightRed.write_fg(f),
 			Self::Green => termion::color::LightGreen.write_fg(f),
 			Self::Blue => termion::color::LightBlue.write_fg(f),
@@ -90,6 +103,7 @@ impl termion::color::Color for Color {
 
 	fn write_bg(&self, f: &mut fmt::Formatter) -> fmt::Result {
 		match self {
+			Self::Default => Ok(()),
 			Self::Red => termion::color::LightRed.write_bg(f),
 			Self::Green => termion::color::LightGreen.write_bg(f),
 			Self::Blue => termion::color::LightBlue.write_bg(f),
@@ -99,9 +113,6 @@ impl termion::color::Color for Color {
 		}
 	}
 }
-
-#[cfg(not(feature = "colors"))]
-pub type Color = ();
 
 /// Highlight format description.
 ///
@@ -161,7 +172,7 @@ impl Style {
 	/// of the span when relevant.
 	#[must_use]
 	#[cfg(not(feature = "colors"))]
-	pub const fn new(underline: char, marker: char) -> Self { Self::Custom(underline, marker, ()) }
+	pub const fn new(underline: char, marker: char) -> Self { Self::Custom(underline, marker, Color::Default) }
 
 	/// Create a new custom highlight style.
 	///
@@ -200,7 +211,7 @@ impl Style {
 	pub fn color(&self) -> Color {
 		#[cfg(not(feature = "colors"))]
 		{
-			()
+			Default::default()
 		}
 		#[cfg(feature = "colors")]
 		{
@@ -1207,7 +1218,7 @@ impl Default for Formatter {
 		Formatter {
 			highlights: Vec::new(),
 			#[cfg(not(feature = "colors"))]
-			margin_color: (),
+			margin_color: Default::default(),
 			#[cfg(feature = "colors")]
 			margin_color: Color::Blue,
 			viewbox: Some(2),
