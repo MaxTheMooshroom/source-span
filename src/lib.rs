@@ -118,6 +118,8 @@ mod position;
 mod layout;
 
 pub use buffer::SourceBuffer;
+#[cfg(feature = "async")]
+pub use buffer::AsyncSourceBuffer;
 pub use loc::Loc;
 pub use metrics::*;
 pub use position::Position;

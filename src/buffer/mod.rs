@@ -1,6 +1,6 @@
 #[cfg(feature = "async")]
-mod r#async;
-mod lazy;
+pub mod r#async;
+pub mod lazy;
 
 #[cfg(feature = "async")]
 pub use r#async::AsyncSourceBuffer;
