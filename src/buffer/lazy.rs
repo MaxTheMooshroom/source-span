@@ -298,3 +298,144 @@ impl<'b, E, I: 'b + Iterator<Item = Result<char, E>>, M: Metrics> Iterator for I
 		}
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::SourceBuffer;
+	use crate::Position;
+
+	type Result = std::result::Result<char, &'static str>;
+	#[allow(type_alias_bounds)]
+	type Buffer<I: Iterator<Item = Result>> = SourceBuffer<&'static str, I, crate::DefaultMetrics>;
+
+	fn buffer<A: IntoIterator<Item = Result>>(input: A) -> Buffer<A::IntoIter> {
+		SourceBuffer::new(
+			input.into_iter(),
+			crate::Position::new(0, 0),
+			crate::DEFAULT_METRICS
+		)
+	}
+
+    #[test]
+    fn get_reads_characters_lazily() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        assert_eq!(buffer.get(0).unwrap(), Some('a'));
+        assert_eq!(buffer.get(1).unwrap(), Some('b'));
+        assert_eq!(buffer.get(2).unwrap(), Some('c'));
+        assert_eq!(buffer.get(5).unwrap(), Some('e'));
+    }
+
+    #[test]
+    fn get_returns_none_at_eof() {
+        let buffer = buffer("abc".chars().map(Ok));
+
+        assert_eq!(buffer.get(0).unwrap(), Some('a'));
+        assert_eq!(buffer.get(2).unwrap(), Some('c'));
+        assert_eq!(buffer.get(3).unwrap(), None);
+        assert_eq!(buffer.get(10).unwrap(), None);
+    }
+
+    #[test]
+    fn get_preserves_final_line_without_newline() {
+        let buffer = buffer("abc".chars().map(Ok));
+
+        assert_eq!(buffer.get(2).unwrap(), Some('c'));
+        assert_eq!(buffer.get(0).unwrap(), Some('a'));
+        assert_eq!(buffer.get(3).unwrap(), None);
+    }
+
+    #[test]
+    fn index_at_maps_positions_to_character_indices() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        assert_eq!(
+            buffer.index_at(Position::new(0, 0)).unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(0, 2)).unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(1, 0)).unwrap(),
+            Some(4)
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(1, 2)).unwrap(),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn index_at_returns_none_for_out_of_range_positions() {
+        let buffer = buffer("abc\n".chars().map(Ok));
+
+        assert_eq!(
+            buffer.index_at(Position::new(0, 4)).unwrap(),
+            None
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(5, 0)).unwrap(),
+            None
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(0, 0)).unwrap(),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn at_returns_character_at_position() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        assert_eq!(
+            buffer.at(Position::new(0, 1)).unwrap(),
+            Some('b')
+        );
+        assert_eq!(
+            buffer.at(Position::new(1, 2)).unwrap(),
+            Some('f')
+        );
+        assert_eq!(
+            buffer.at(Position::new(5, 0)).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn errors_are_returned_once() {
+        let buffer = buffer([
+            Ok('a'),
+            Ok('\n'),
+            Err("input error"),
+        ]);
+
+        assert_eq!(buffer.get(0).unwrap(), Some('a'));
+        assert_eq!(buffer.get(2), Err("input error"));
+        assert_eq!(buffer.get(2).unwrap(), None);
+    }
+
+    #[test]
+    fn iter_reads_entire_stream() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        let text = buffer.iter().into_string().unwrap();
+
+        assert_eq!(text, "abc\ndef");
+    }
+
+    #[test]
+    fn iter_from_starts_at_requested_position() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        let text = buffer
+            .iter_from(Position::new(1, 1))
+            
+            .into_string()
+            
+            .unwrap();
+
+        assert_eq!(text, "ef");
+    }
+}
