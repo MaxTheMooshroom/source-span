@@ -431,9 +431,7 @@ mod tests {
 
         let text = buffer
             .iter_from(Position::new(1, 1))
-            
             .into_string()
-            
             .unwrap();
 
         assert_eq!(text, "ef");

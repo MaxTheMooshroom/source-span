@@ -455,7 +455,9 @@ mod tests {
     async fn iter_reads_entire_stream() {
         let buffer = buffer("abc\ndef".chars().map(Ok));
 
-        let text = buffer.iter().await.into_string().await.unwrap();
+        let text = buffer.iter().await
+			.into_string().await
+			.unwrap();
 
         assert_eq!(text, "abc\ndef");
     }
@@ -465,10 +467,8 @@ mod tests {
         let buffer = buffer("abc\ndef".chars().map(Ok));
 
         let text = buffer
-            .iter_from(Position::new(1, 1))
-            .await
-            .into_string()
-            .await
+            .iter_from(Position::new(1, 1)).await
+            .into_string().await
             .unwrap();
 
         assert_eq!(text, "ef");
