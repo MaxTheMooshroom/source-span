@@ -128,6 +128,18 @@ compile_error!(
 	"features 'termion' and 'crossterm' are mutually exclusive."
 );
 
+#[cfg(all(feature = "colors-backend", not(feature = "colors")))]
+compile_error!(
+	concat!(
+		"feature 'colors-backend' is a utility feature for indicating that an implementation is selected. ",
+		"However, the feature 'color' is not enabled, which would indicate that no backend is selected. ",
+		"Disable the 'colors-backend' feature, and enable one of the backends ('termion' or 'crossterm')"
+	)
+);
+
+#[cfg(all(feature = "termion", target_os = "windows"))]
+compile_error!("feature 'termion' does not support windows, please use feature 'crossterm' instead");
+
 /// Span in a source file.
 ///
 /// A span points to a range of caracters between two cursor [`Position`].
