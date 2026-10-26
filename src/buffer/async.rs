@@ -1,6 +1,5 @@
 use tokio_stream::{Stream, StreamExt};
 
-use std::cell::RefCell;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -13,18 +12,21 @@ use crate::{Metrics, Position, Span};
 /// a `char` stream, or as a `SourceBuffer` to access an arbitrary fragment of
 /// the input source stream.
 pub struct AsyncSourceBuffer<E, I: Stream<Item = Result<char, E>>, M: Metrics> {
-	p: RefCell<Inner<E, I>>,
+	state: tokio::sync::RwLock<Inner<E>>,
+
+	input: tokio::sync::Mutex<Pin<Box<I>>>,
 
 	/// Metrics used.
 	metrics: M,
 }
 
-struct Inner<E, I: Stream<Item = Result<char, E>>> {
-	/// Input source `char` stream.
-	input: Pin<Box<I>>,
-
+/// The tracked state of the input stream.
+struct Inner<E> {
 	/// SourceBuffer error state.
 	error: Option<E>,
+
+	/// Whether EOF has been reached.
+	done: bool,
 
 	/// Buffer data.
 	data: Vec<char>,
@@ -38,33 +40,64 @@ struct Inner<E, I: Stream<Item = Result<char, E>>> {
 	span: Span,
 }
 
-impl<E, I: Stream<Item = Result<char, E>>> Inner<E, I> {
+impl<E, I: Stream<Item = Result<char, E>>, M: Metrics> AsyncSourceBuffer<E, I, M> {
+	/// Create a new empty buffer starting at the given position.
+	pub fn new(input: I, position: Position, metrics: M) -> Self {
+		Self {
+			state: tokio::sync::RwLock::const_new(Inner {
+				error: None,
+				done: false,
+				data: Vec::new(),
+				lines: vec![0],
+				span: position.into(),
+			}),
+			input: tokio::sync::Mutex::new(Box::pin(input)),
+			metrics,
+		}
+	}
+
 	/// Read the next line from the input stream and add it to the buffer.
-	/// Returns `true` if a new line has been added. Returns `false` if the
-	/// source stream is done.
-	async fn read_line<M: Metrics>(&mut self, metrics: &M) -> bool {
-		if self.error.is_none() {
-			let line = self.span.end().line;
-			while line == self.span.end().line {
-				match self.input.next().await {
-					Some(Ok(c)) => {
-						self.data.push(c);
-						self.span.push(c, metrics);
-					}
-					Some(Err(e)) => {
-						self.error = Some(e);
-						return false;
-					}
-					None => return false,
-				}
+	/// Returns `true` if a new line has been added or was not needed. Returns
+	/// `false` if the source stream is done.
+	async fn read_line(&self, pos: Option<Position>) -> bool {
+		let mut input = self.input.lock().await;
+
+		// in case a read was performed while we were waiting on the input lock
+		let line = {
+			let state = self.state.read().await;
+			if state.done || state.error.is_some() {
+				return false;
+			} else if pos.is_some_and(|p| p < state.span.end()) {
+				return true;
 			}
+			state.span.end().line
+		};
 
-			// register the next line index.
-			self.lines.push(self.data.len());
+		loop {
+			let item = input.next().await;
 
-			true
-		} else {
-			false
+			let mut state = self.state.write().await;
+
+			match item {
+				Some(Ok(c)) => {
+					state.data.push(c);
+					state.span.push(c, &self.metrics);
+
+					if state.span.end().line != line {
+						let len = state.data.len();
+						state.lines.push(len);
+						break true;
+					}
+				},
+				Some(Err(e)) => {
+					state.error = Some(e);
+					break false;
+				},
+				None => {
+					state.done = true;
+					break false
+				},
+			}
 		}
 	}
 
@@ -77,29 +110,32 @@ impl<E, I: Stream<Item = Result<char, E>>> Inner<E, I> {
 	/// positions, if the source stream ends before the given position, or
 	/// if the line at the given position is shorter than the given position
 	/// column.
-	async fn index_at<M: Metrics>(&mut self, pos: Position, metrics: &M) -> Result<Option<usize>, E> {
-		if pos < self.span.start() {
+	pub async fn index_at(&self, pos: Position) -> Result<Option<usize>, E> {
+		if pos < self.state.read().await.span.start() {
 			Ok(None)
 		} else {
-			while pos >= self.span.end() && self.read_line(metrics).await {}
+			while self.read_line(Some(pos)).await && pos >= self.state.read().await.span.end() {}
+			let span = self.state.read().await.span;
 
-			if pos >= self.span.end() {
+			if pos >= span.end() {
+				let mut state = self.state.write().await;
 				let mut error = None;
-				std::mem::swap(&mut error, &mut self.error);
+				std::mem::swap(&mut error, &mut state.error);
 				match error {
 					Some(e) => Err(e),
 					None => Ok(None),
 				}
 			} else {
+				let state = self.state.read().await;
 				// line index relative to the first line of the buffer.
-				let relative_line = pos.line - self.span.start().line;
+				let relative_line = pos.line - span.start().line;
 				// get the index of the char of the begining of the line in the buffer.
-				let mut i = self.lines[relative_line];
+				let mut i = state.lines[relative_line];
 				// place a virtual cursor at the begining of the target line.
 				let mut cursor = Position::new(pos.line, 0);
 
 				while cursor < pos {
-					cursor = cursor.next(self.data[i], metrics);
+					cursor = cursor.next(state.data[i], &self.metrics);
 					i += 1;
 				}
 
@@ -120,34 +156,21 @@ impl<E, I: Stream<Item = Result<char, E>>> Inner<E, I> {
 	/// stream will be read until the buffer span includes the given
 	/// position. Returns `None` if the source stream ends before the given
 	/// position.
-	async fn get<M: Metrics>(&mut self, i: usize, metrics: &M) -> Result<Option<char>, E> {
-		while i >= self.data.len() && self.read_line(metrics).await {}
+	pub async fn get(&self, i: usize) -> Result<Option<char>, E> {
+		while self.read_line(None).await && i >= self.state.read().await.data.len() {}
+		let len = self.state.read().await.data.len();
 
-		if i >= self.data.len() {
+		if i >= len {
+			let mut state = self.state.write().await;
 			let mut error = None;
-			std::mem::swap(&mut error, &mut self.error);
+			std::mem::swap(&mut error, &mut state.error);
 			match error {
 				Some(e) => Err(e),
 				None => Ok(None),
 			}
 		} else {
-			Ok(Some(self.data[i]))
-		}
-	}
-}
-
-impl<E, I: Stream<Item = Result<char, E>>, M: Metrics> AsyncSourceBuffer<E, I, M> {
-	/// Create a new empty buffer starting at the given position.
-	pub fn new(input: I, position: Position, metrics: M) -> Self {
-		Self {
-			p: RefCell::new(Inner {
-				input: Box::pin(input),
-				error: None,
-				data: Vec::new(),
-				lines: vec![0],
-				span: position.into(),
-			}),
-			metrics,
+			let state = self.state.read().await;
+			Ok(Some(state.data[i]))
 		}
 	}
 
@@ -155,20 +178,7 @@ impl<E, I: Stream<Item = Result<char, E>>, M: Metrics> AsyncSourceBuffer<E, I, M
 	pub fn metrics(&self) -> &M { &self.metrics }
 
 	/// Get the span of the entire buffered data.
-	pub fn span(&self) -> Span { self.p.borrow().span }
-
-	/// Get the index of the char at the given cursor position if it is in the
-	/// buffer. If it is not in the buffer but after the buffered content,
-	/// the input stream will be read until the buffer span includes the
-	/// given position.
-	///
-	/// Returns `None` if the given position if previous to the buffer start
-	/// positions, if the source stream ends before the given position, or
-	/// if the line at the given position is shorter than the given position
-	/// column.
-	pub async fn index_at(&self, pos: Position) -> Result<Option<usize>, E> {
-		self.p.borrow_mut().index_at(pos, &self.metrics).await
-	}
+	pub fn span(&self) -> Span { self.state.blocking_read().span }
 
 	/// Get the char at the given position if it is in the buffer.
 	/// If it is not in the buffer yet, the input stream will be pulled until
@@ -179,30 +189,22 @@ impl<E, I: Stream<Item = Result<char, E>>, M: Metrics> AsyncSourceBuffer<E, I, M
 	/// position is shorter than the given position column.
 	pub async fn at(&self, pos: Position) -> Result<Option<char>, E> {
 		match self.index_at(pos).await {
-			Ok(Some(i)) => self.p.borrow_mut().get(i, &self.metrics).await,
+			Ok(Some(i)) => self.get(i).await,
 			Ok(None) => Ok(None),
 			Err(e) => Err(e)
 		}
 	}
 
-	/// Get the character at the given index.
-	///
-	/// If it is not in the buffer but after the buffered content, the input
-	/// stream will be read until the buffer span includes the given
-	/// position. Returns `None` if the source stream ends before the given
-	/// position.
-	pub async fn get(&self, i: usize) -> Result<Option<char>, E> { self.p.borrow_mut().get(i, &self.metrics).await }
-
-	/// Returns an iterator through the characters of the buffer from the
-	/// begining of it.
+	/// Returns a stream through the characters of the buffer from the
+	/// beginning of it.
 	///
 	/// When it reaches the end of the buffer, the buffer will start reading
 	/// from the source stream.
-	pub fn iter(&self) -> Iter<'_, E, I, M> {
+	pub async fn iter(&self) -> Iter<'_, E, I, M> {
 		Iter {
 			buffer: self,
 			i: Some(Ok(0)),
-			pos: self.p.borrow().span.start(),
+			pos: self.state.read().await.span.start(),
 			end: Position::end(),
             future: None,
 		}
@@ -216,7 +218,7 @@ impl<E, I: Stream<Item = Result<char, E>>, M: Metrics> AsyncSourceBuffer<E, I, M
 	/// When it reaches the end of the buffer, the buffer will start reading
 	/// from the source stream.
 	pub async fn iter_from(&self, pos: Position) -> Iter<'_, E, I, M> {
-		let start = self.p.borrow().span.start();
+		let start = self.state.read().await.span.start();
 		let pos = std::cmp::max(start, pos);
 
 		Iter {
@@ -236,7 +238,7 @@ impl<E, I: Stream<Item = Result<char, E>>, M: Metrics> AsyncSourceBuffer<E, I, M
 	/// When it reaches the end of the buffer, the buffer will start reading
 	/// from the source stream.
 	pub async fn iter_span(&self, span: Span) -> Iter<'_, E, I, M> {
-		let start = self.p.borrow().span.start();
+		let start = self.state.read().await.span.start();
 		let pos = std::cmp::max(start, span.start());
 
 		Iter {
@@ -265,6 +267,13 @@ pub struct Iter<'b, E, I: 'b + Stream<Item = Result<char, E>>, M: Metrics> {
     future: Option<GetFuture<'b, E>>,
 }
 
+impl<'b, E, I, M> std::marker::Unpin for Iter<'b, E, I, M>
+where
+	E: std::fmt::Debug,
+	I: 'b + Stream<Item = Result<char, E>>,
+	M: Metrics,
+{}
+
 impl<'b, E: std::fmt::Debug + Unpin, I: 'b + Stream<Item = Result<char, E>>, M: Metrics> Iter<'b, E, I, M> {
 	pub async fn into_string(mut self) -> Result<String, E> {
 		let mut string = String::new();
@@ -281,9 +290,7 @@ impl<'b, E: std::fmt::Debug, I: 'b + Stream<Item = Result<char, E>>, M: Metrics>
     type Item = Result<char, E>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        // SAFETY: the pinned future remains pinned inside its Box;
-        // moving the Pin<Box<_>> handle does not move the future.
-        let this = unsafe { self.get_unchecked_mut() };
+        let this = self.get_mut();
 
         if this.pos >= this.end {
             return Poll::Ready(None);
@@ -292,7 +299,9 @@ impl<'b, E: std::fmt::Debug, I: 'b + Stream<Item = Result<char, E>>, M: Metrics>
         match &this.i {
             Some(Ok(i)) => {
                 if this.future.is_none() {
-                    this.future = Some(Box::pin(this.buffer.get(*i)));
+                    let buffer = this.buffer;
+                    let i = *i;
+                    this.future = Some(Box::pin(async move { buffer.get(i).await }));
                 }
 
                 match this.future.as_mut().unwrap().as_mut().poll(cx) {
@@ -323,3 +332,146 @@ impl<'b, E: std::fmt::Debug, I: 'b + Stream<Item = Result<char, E>>, M: Metrics>
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_stream::iter;
+
+	type Result = std::result::Result<char, &'static str>;
+	#[allow(type_alias_bounds)]
+	type Buffer<I: Iterator<Item = Result>> = AsyncSourceBuffer<&'static str, tokio_stream::Iter<I>, crate::DefaultMetrics>;
+
+    fn buffer<I: Iterator<Item = Result>, A: IntoIterator<IntoIter = I, Item = Result>>(input: A) -> Buffer<I> {
+        AsyncSourceBuffer::new(
+            iter(input.into_iter()),
+            Position::default(),
+            crate::DEFAULT_METRICS,
+        )
+    }
+
+    #[tokio::test]
+    async fn get_reads_characters_lazily() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        assert_eq!(buffer.get(0).await.unwrap(), Some('a'));
+        assert_eq!(buffer.get(1).await.unwrap(), Some('b'));
+        assert_eq!(buffer.get(2).await.unwrap(), Some('c'));
+        assert_eq!(buffer.get(5).await.unwrap(), Some('e'));
+    }
+
+    #[tokio::test]
+    async fn get_returns_none_at_eof() {
+        let buffer = buffer("abc".chars().map(Ok));
+
+        assert_eq!(buffer.get(0).await.unwrap(), Some('a'));
+        assert_eq!(buffer.get(2).await.unwrap(), Some('c'));
+        assert_eq!(buffer.get(3).await.unwrap(), None);
+        assert_eq!(buffer.get(10).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn get_preserves_final_line_without_newline() {
+        let buffer = buffer("abc".chars().map(Ok));
+
+        assert_eq!(buffer.get(2).await.unwrap(), Some('c'));
+        assert_eq!(buffer.get(0).await.unwrap(), Some('a'));
+        assert_eq!(buffer.get(3).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn index_at_maps_positions_to_character_indices() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        assert_eq!(
+            buffer.index_at(Position::new(0, 0)).await.unwrap(),
+            Some(0)
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(0, 2)).await.unwrap(),
+            Some(2)
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(1, 0)).await.unwrap(),
+            Some(4)
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(1, 2)).await.unwrap(),
+            Some(6)
+        );
+    }
+
+    #[tokio::test]
+    async fn index_at_returns_none_for_out_of_range_positions() {
+        let buffer = buffer("abc\n".chars().map(Ok));
+
+        assert_eq!(
+            buffer.index_at(Position::new(0, 4)).await.unwrap(),
+            None
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(5, 0)).await.unwrap(),
+            None
+        );
+        assert_eq!(
+            buffer.index_at(Position::new(0, 0)).await.unwrap(),
+            Some(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn at_returns_character_at_position() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        assert_eq!(
+            buffer.at(Position::new(0, 1)).await.unwrap(),
+            Some('b')
+        );
+        assert_eq!(
+            buffer.at(Position::new(1, 2)).await.unwrap(),
+            Some('f')
+        );
+        assert_eq!(
+            buffer.at(Position::new(5, 0)).await.unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn errors_are_returned_once() {
+        let buffer = buffer([
+            Ok('a'),
+            Ok('\n'),
+            Err("input error"),
+        ]);
+
+        assert_eq!(buffer.get(0).await.unwrap(), Some('a'));
+        assert_eq!(buffer.get(2).await, Err("input error"));
+        assert_eq!(buffer.get(2).await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn iter_reads_entire_stream() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        let text = buffer.iter().await.into_string().await.unwrap();
+
+        assert_eq!(text, "abc\ndef");
+    }
+
+    #[tokio::test]
+    async fn iter_from_starts_at_requested_position() {
+        let buffer = buffer("abc\ndef".chars().map(Ok));
+
+        let text = buffer
+            .iter_from(Position::new(1, 1))
+            .await
+            .into_string()
+            .await
+            .unwrap();
+
+        assert_eq!(text, "ef");
+    }
+}
+
